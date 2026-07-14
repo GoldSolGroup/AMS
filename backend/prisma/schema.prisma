@@ -1,0 +1,441 @@
+// DIRCO Electronic Asset Management System — Prisma schema
+// Run `prisma generate` then `prisma db push` (or `prisma migrate dev`) from backend/
+
+generator client {
+  provider                    = "prisma-client-py"
+  interface                   = "asyncio"
+  recursive_type_depth        = 5
+  enable_experimental_decimal = true
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// One row per client/department deployment (white-label branding)
+model Tenant {
+  id             String   @id @default(cuid())
+  orgName        String   @default("DIRCO") @map("org_name")
+  logoUrl        String?  @map("logo_url")
+  primaryColor   String   @default("#152A4E") @map("primary_color")
+  accentColor    String   @default("#0E9C8F") @map("accent_color")
+  secondaryColor String   @default("#C9A227") @map("secondary_color")
+  themeName      String?  @map("theme_name")
+  sameRegionRequiresApproval Boolean @default(true) @map("same_region_requires_approval")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  classes             AssetClass[]
+  missions            Mission[]
+  assets              Asset[]
+  wipProjects         WipProject[]
+  cycles              VerificationCycle[]
+  maintenance         MaintenanceRequest[]
+  correctionJournals  CorrectionJournal[]
+  training            TrainingRecord[]
+  tickets             SupportTicket[]
+  milestones          Milestone[]
+  glMapping           GlMapping[]
+  migrationRuns       MigrationRun[]
+  team                TeamMember[]
+  passwordPolicy      PasswordPolicy?
+  loginAudit          LoginAudit[]
+  activity            ActivityLog[]
+  actionRequests      ActionRequest[]
+
+  @@map("tenants")
+}
+
+/// Missions replace the old hardcoded location list — Super User (System
+/// Owner) defines these, and each one can have its own Mission Admin.
+model Mission {
+  id           String   @id @default(cuid())
+  tenantId     String   @map("tenant_id")
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  region       String?
+  isHeadOffice Boolean  @default(false) @map("is_head_office")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  teamMembers TeamMember[]
+
+  @@unique([tenantId, name])
+  @@map("missions")
+}
+
+model AssetClass {
+  id             String  @id @default(cuid())
+  tenantId       String  @map("tenant_id")
+  tenant         Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name           String
+  type           String // Movable | Immovable
+  predefined     Boolean @default(false)
+  active         Boolean @default(true)
+  usefulLifeYears Int?   @map("useful_life_years")
+
+  @@map("asset_classes")
+}
+
+model Asset {
+  id            String    @id @default(cuid())
+  tenantId      String    @map("tenant_id")
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  barcode       String
+  description   String
+  category      String
+  location      String?
+  room          String?
+  custodian     String?
+  purchaseDate  DateTime? @map("purchase_date") @db.Date
+  price         Decimal   @default(0) @db.Decimal(14, 2)
+  currency      String    @default("ZAR")
+  status        String    @default("In Use")
+  costCentre    String?   @map("cost_centre")
+  serial        String?
+  poNumber      String?   @map("po_number")
+  invoiceRef    String?   @map("invoice_ref")
+  fundingSource String    @default("Voted Funds") @map("funding_source")
+  scoaFund      String?   @map("scoa_fund")
+  scoaFunction  String?   @map("scoa_function")
+  scoaItem      String?   @map("scoa_item")
+  donated       Boolean   @default(false)
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  wipProjectId  String?     @map("wip_project_id")
+  wipProject    WipProject? @relation(fields: [wipProjectId], references: [id])
+
+  photos    AssetPhoto[]
+  documents AssetDocument[]
+  history   AssetHistory[]
+  disposals Disposal[]
+  maintenance MaintenanceRequest[]
+  correctionJournals CorrectionJournal[]
+  cycleLinks VerificationCycleAsset[]
+  actionRequests ActionRequest[]
+
+  @@unique([tenantId, barcode])
+  @@map("assets")
+}
+
+model AssetPhoto {
+  id        String   @id @default(cuid())
+  assetId   String   @map("asset_id")
+  asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  url       String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("asset_photos")
+}
+
+model AssetDocument {
+  id        String   @id @default(cuid())
+  assetId   String   @map("asset_id")
+  asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  name      String
+  url       String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("asset_documents")
+}
+
+model AssetHistory {
+  id        String   @id @default(cuid())
+  assetId   String   @map("asset_id")
+  asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  type      String
+  note      String?
+  actor     String   @default("System")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("asset_history")
+}
+
+model Disposal {
+  id           String    @id @default(cuid())
+  assetId      String    @map("asset_id")
+  asset        Asset     @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  method       String
+  reason       String?
+  value        Decimal   @default(0) @db.Decimal(14, 2)
+  status       String    @default("Pending")
+  reference    String?
+  disposalDate DateTime? @map("disposal_date") @db.Date
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  @@map("disposals")
+}
+
+model WipProject {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  location  String?
+  budget    Decimal  @default(0) @db.Decimal(14, 2)
+  status    String   @default("In Progress")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  invoices      WipInvoice[]
+  retentions    WipRetention[]
+  cessions      WipCession[]
+  boq           WipBoq[]
+  capitalisedAssets Asset[]
+
+  @@map("wip_projects")
+}
+
+model WipInvoice {
+  id        String     @id @default(cuid())
+  projectId String     @map("project_id")
+  project   WipProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ref       String
+  amount    Decimal    @default(0) @db.Decimal(14, 2)
+  createdAt DateTime   @default(now()) @map("created_at")
+
+  @@map("wip_invoices")
+}
+
+model WipRetention {
+  id        String     @id @default(cuid())
+  projectId String     @map("project_id")
+  project   WipProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  pct       Decimal    @db.Decimal(5, 2)
+  surety    String?
+  createdAt DateTime   @default(now()) @map("created_at")
+
+  @@map("wip_retentions")
+}
+
+model WipCession {
+  id          String     @id @default(cuid())
+  projectId   String     @map("project_id")
+  project     WipProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  beneficiary String
+  amount      Decimal    @default(0) @db.Decimal(14, 2)
+  createdAt   DateTime   @default(now()) @map("created_at")
+
+  @@map("wip_cessions")
+}
+
+model WipBoq {
+  id        String     @id @default(cuid())
+  projectId String     @map("project_id")
+  project   WipProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  item      String
+  amount    Decimal    @default(0) @db.Decimal(14, 2)
+  createdAt DateTime   @default(now()) @map("created_at")
+
+  @@map("wip_boq")
+}
+
+model VerificationCycle {
+  id       String    @id @default(cuid())
+  tenantId String    @map("tenant_id")
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  scope    String
+  dueDate  DateTime? @map("due_date") @db.Date
+  closed   Boolean   @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  assets VerificationCycleAsset[]
+
+  @@map("verification_cycles")
+}
+
+model VerificationCycleAsset {
+  id         String             @id @default(cuid())
+  cycleId    String             @map("cycle_id")
+  cycle      VerificationCycle  @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  assetId    String             @map("asset_id")
+  asset      Asset              @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  verified   Boolean            @default(false)
+  verifiedAt DateTime?          @map("verified_at")
+  verifiedBy String?            @map("verified_by")
+
+  @@map("verification_cycle_assets")
+}
+
+model MaintenanceRequest {
+  id          String    @id @default(cuid())
+  tenantId    String    @map("tenant_id")
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assetId     String?   @map("asset_id")
+  asset       Asset?    @relation(fields: [assetId], references: [id])
+  description String
+  dueDate     DateTime? @map("due_date") @db.Date
+  status      String    @default("Requested")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@map("maintenance_requests")
+}
+
+model CorrectionJournal {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assetId   String?  @map("asset_id")
+  asset     Asset?   @relation(fields: [assetId], references: [id])
+  reason    String
+  evidence  String?
+  approver  String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("correction_journals")
+}
+
+model TrainingRecord {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  module    String
+  audience  String?
+  trainee   String?
+  status    String   @default("Not Started")
+  signedOff Boolean  @default(false) @map("signed_off")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("training_records")
+}
+
+model SupportTicket {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  subject   String
+  priority  String   @default("Medium")
+  sla       String?
+  status    String   @default("Open")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("support_tickets")
+}
+
+model Milestone {
+  id         String    @id @default(cuid())
+  tenantId   String    @map("tenant_id")
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name       String
+  targetDate DateTime? @map("target_date") @db.Date
+  status     String    @default("Not Started")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@map("milestones")
+}
+
+model GlMapping {
+  id       String @id @default(cuid())
+  tenantId String @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  category String
+  glCode   String? @map("gl_code")
+
+  @@unique([tenantId, category])
+  @@map("gl_mapping")
+}
+
+/// A pending change awaiting sign-off before it's applied to the asset —
+/// covers Transfer, Reclassification and Fair Valuation. Disposal has its
+/// own dedicated approval flow (see the Disposal model) since it predates
+/// this generic queue.
+model ActionRequest {
+  id          String    @id @default(cuid())
+  tenantId    String    @map("tenant_id")
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assetId     String    @map("asset_id")
+  asset       Asset     @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  type        String    // Transfer | Reclassification | Fair Valuation
+  payload     String    // JSON-encoded proposed changes
+  reason      String?
+  requestedBy String    @map("requested_by")
+  status      String    @default("Pending") // Pending | Approved | Rejected
+  reviewedBy  String?   @map("reviewed_by")
+  reviewNote  String?   @map("review_note")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  reviewedAt  DateTime? @map("reviewed_at")
+
+  @@map("action_requests")
+}
+
+model MigrationRun {
+  id             String   @id @default(cuid())
+  tenantId       String   @map("tenant_id")
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  legacyCount    Int?     @map("legacy_count")
+  legacyValue    Decimal? @map("legacy_value") @db.Decimal(14, 2)
+  migratedCount  Int?     @map("migrated_count")
+  migratedValue  Decimal? @map("migrated_value") @db.Decimal(14, 2)
+  status         String   @default("complete")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@map("migration_runs")
+}
+
+/// Roster shown on the Security & Access screen. Kept separate from real
+/// authentication for now — see README for how to graduate this to real
+/// auth (e.g. behind FastAPI + OAuth2/JWT) later.
+model TeamMember {
+  id           String   @id @default(cuid())
+  tenantId     String   @map("tenant_id")
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  fullName     String   @map("full_name")
+  email        String?
+  passwordHash String?  @map("password_hash")
+  role         String   @default("Asset Management Officer")
+  status       String   @default("Active")
+  vetted       Boolean  @default(true)
+  lastLogin    String?  @map("last_login")
+  lastLoginAt  DateTime? @map("last_login_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  missionId    String?  @map("mission_id")
+  mission      Mission? @relation(fields: [missionId], references: [id])
+
+  sessions Session[]
+
+  @@unique([tenantId, email])
+  @@map("team_members")
+}
+
+model Session {
+  id           String     @id @default(cuid())
+  token        String     @unique
+  teamMemberId String     @map("team_member_id")
+  teamMember   TeamMember @relation(fields: [teamMemberId], references: [id], onDelete: Cascade)
+  createdAt    DateTime   @default(now()) @map("created_at")
+  expiresAt    DateTime   @map("expires_at")
+
+  @@map("sessions")
+}
+
+model PasswordPolicy {
+  tenantId      String  @id @map("tenant_id")
+  tenant        Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  minLength     Int     @default(12) @map("min_length")
+  complexity    Boolean @default(true)
+  expiryDays    Int     @default(90) @map("expiry_days")
+  historyCount  Int     @default(5) @map("history_count")
+
+  @@map("password_policy")
+}
+
+model LoginAudit {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userName  String?  @map("user_name")
+  outcome   String
+  ip        String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("login_audit")
+}
+
+model ActivityLog {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  message   String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("activity_log")
+}
